@@ -5,10 +5,15 @@ from .base import BaseModel
 
 
 class NNMFModel(BaseModel):
-    def __init__(self, n_components, max_iter=1000, epsilon=1e-6):
+    def __init__(self,
+                 n_components,
+                 max_iter=1000,
+                 epsilon=1e-6,
+                 verbose=False):
         self.n_components = n_components
         self.max_iter = max_iter
         self.epsilon = epsilon
+        self.verbose = verbose
 
     def fit(self, X, y=None, *args, **kwargs):
         self.fit_transform(X, y, args=args, kwargs=kwargs)
@@ -20,7 +25,8 @@ class NNMFModel(BaseModel):
     def fit_transform(self, X, y=None, *args, **kwargs):
         return self._nnmf_method(X)
 
-    def _init_random_w_h(self, input_shape, hiden_shape, output_shape):
+    @staticmethod
+    def _init_random_w_h(input_shape, hiden_shape, output_shape):
         W = np.random.randint(100, size=(input_shape, hiden_shape))
         H = np.random.randint(100, size=(hiden_shape, output_shape))
         return W, H
@@ -32,7 +38,7 @@ class NNMFModel(BaseModel):
         X_old = W @ H
         X_new = X_old.copy()
 
-        for _ in range(self.max_iter):
+        for iteration in range(self.max_iter):
             alpha = H / (W.T @ W @ H)
             beta = W / (W @ H @ (H.T))
 
@@ -42,6 +48,9 @@ class NNMFModel(BaseModel):
             X_new = W @ H
 
             norms.append(la.norm(X - X_new))
+
+            if self.verbose:
+                print(f"{iteration+1}. Norm: {norms[-1]}")
 
             if la.norm(X_old - X_new) < self.epsilon:
                 break
