@@ -1,6 +1,9 @@
 .DS_Store
 .idea/
-data/
+
+# Data folder except subsets 
+data/*
+!data/subsets/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
