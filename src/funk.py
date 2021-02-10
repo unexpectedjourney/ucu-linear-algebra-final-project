@@ -1,436 +1,170 @@
 import numpy as np
 import pandas as pd
-import numpy.linalg as la
 import time
 from .base import BaseModel
 
+
 class Funk(BaseModel):
-    """
-    lr : float, default=.005
-        Learning rate.
-    reg : float, default=.02
-        L2 regularization factor.
-    n_epochs : int, default=20
-        Number of SGD iterations.
-    n_factors : int, default=100
-        Number of latent factors.
-    early_stopping : bool, default=False
-        Whether or not to stop training based on a validation monitoring.
-    shuffle : bool, default=False
-        Whether or not to shuffle the training set before each epoch.
-    min_delta : float, default=.001
-        Minimun delta to argue for an improvement.
-    min_rating : int, default=1
-        Minimum value a rating should be clipped to at inference time.
-    max_rating : int, default=5
-        Maximum value a rating should be clipped to at inference time.
-    Attributes
-    ----------
-    user_mapping_ : dict
-        Maps user ids to their indexes.
-    item_mapping_ : dict
-        Maps item ids to their indexes.
-    global_mean_ : float
-        Ratings arithmetic mean.
-    pu_ : numpy.array
-        User latent factors matrix.
-    qi_ : numpy.array
-        Item latent factors matrix.
-    bu_ : numpy.array
-        User biases vector.
-    bi_ : numpy.array
-        Item biases vector.
-    metrics_ : pandas.DataFrame
-        Validation metrics at each epoch. Column names are 'Loss', 'RMSE', and
-        'MAE'.
-    """
 
-    def __init__(self, lr=.005, reg=.02, n_epochs=20, n_factors=100,
-                 early_stopping=False, shuffle=False, min_delta=.001,
-                 min_rating=1, max_rating=5):
+    def __init__(self, lr=0.005, reg=0.02, n_epochs=20, n_factors=100, min_delta=0.001):
+        self.lr = lr  # learning rate
+        self.reg = reg  # regularization coef
+        self.n_epochs = n_epochs  # number of SGD iterations
+        self.n_factors = n_factors  # number of latent factors
+        self.min_delta = min_delta  # min iteration improvement, needed for early stop checking
+        self.min_rating = 1
+        self.max_rating = 5
 
-        self.lr = lr
-        self.reg = reg
-        self.n_epochs = n_epochs
-        self.n_factors = n_factors
-        self.early_stopping = early_stopping
-        self.shuffle = shuffle
-        self.min_delta = min_delta
-        self.min_rating = min_rating
-        self.max_rating = max_rating
+    def fit(self, X, X_val):
+        start = time.time()
 
-    def fit(self, X, X_val=None):
-        """Learns model weights from input data.
+        X = self.preprocess_data(X)
+        X_val = self.preprocess_data(X_val, train=False)  # for val data train must be False, so we won't update mappings
+        self.init_metrics()  # init empty matrix of metrics
+        self.mean = np.mean(X[:, 2])  # the mean value of ratings
+        self.sgd(X, X_val)  # perform sgd
 
-        X : pandas.DataFrame
-            Training set, must have 'u_id' for user ids, 'i_id' for item ids,
-            and 'rating' column names.
-        X_val : pandas.DataFrame, default=None
-            Validation set with the same column structure as X.
-        Returns
-        -------
-        self : SVD object
-            The current fitted object.
-        """
-        X = self._preprocess_data(X)
-
-        if X_val is not None:
-            X_val = self._preprocess_data(X_val, train=False, verbose=False)
-            self._init_metrics()
-
-        self.global_mean_ = np.mean(X[:, 2])
-        self._run_sgd(X, X_val)
+        end = time.time()
+        print(f'this stuff was running {end - start:.1f} sec')
 
         return self
 
-    def _preprocess_data(self, X, train=True, verbose=True):
-        """Maps user and item ids to their indexes.
-        Parameters
-        ----------
-        X : pandas.DataFrame
-            Dataset, must have 'u_id' for user ids, 'i_id' for item ids, and
-            'rating' column names.
-        train : boolean
-            Whether or not X is the training set or the validation set.
-        Returns
-        -------
-        X : numpy.array
-            Mapped dataset.
-        """
-        print('Preprocessing data...\n')
+    def predict(self, X):
+        predictions = []  # return predictions as list
+        for u_id, i_id in zip(X['u_id'], X['i_id']):
+
+            pred = self.mean  # if user or item is unknown, we return mean rating by default
+
+            if u_id in self.user_map:
+                u_idx = self.user_map[u_id]
+                pred += self.user_vector[u_idx]
+
+            if i_id in self.item_map:
+                i_idx = self.item_map[i_id]
+                pred += self.item_vector[i_idx]
+
+            if u_id in self.user_map and i_id in self.item_map:
+                pred += np.dot(self.U[u_idx], self.V[i_idx])
+
+            pred = self.max_rating if pred > self.max_rating else pred
+            pred = self.min_rating if pred < self.min_rating else pred
+            predictions.append(pred)
+
+        return predictions
+
+    def preprocess_data(self, X, train=True):
         X = X.copy()
 
-        if train:  # Mappings have to be created
+        if train:
             user_ids = X['u_id'].unique().tolist()
             item_ids = X['i_id'].unique().tolist()
 
-            n_users = len(user_ids)
-            n_items = len(item_ids)
+            self.n_users = len(user_ids)  # total amount of unique users
+            self.n_items = len(item_ids)  # same for items
 
-            user_idx = range(n_users)
-            item_idx = range(n_items)
+            user_idx = range(self.n_users)
+            item_idx = range(self.n_items)
 
-            self.user_mapping_ = dict(zip(user_ids, user_idx))
-            self.item_mapping_ = dict(zip(item_ids, item_idx))
+            self.user_map = dict(zip(user_ids, user_idx))  # creating id - index mapping
+            self.item_map = dict(zip(item_ids, item_idx))
 
-        X['u_id'] = X['u_id'].map(self.user_mapping_)
-        X['i_id'] = X['i_id'].map(self.item_mapping_)
+        X['u_id'] = X['u_id'].map(self.user_map)  # linking users ids to their matrix indices
+        X['i_id'] = X['i_id'].map(self.item_map)  # linking items ids to matrix indices
 
-        # Tag validation set unknown users/items with -1 (enables
-        # `fast_methods._compute_val_metrics` detecting them)
-        X.fillna(-1, inplace=True)
+        X.fillna(-1, inplace=True)  # -1 for the missing values
 
         X['u_id'] = X['u_id'].astype(np.int32)
         X['i_id'] = X['i_id'].astype(np.int32)
 
         return X[['u_id', 'i_id', 'rating']].values
 
-    def _init_metrics(self):
-        metrics = np.zeros((self.n_epochs, 3), dtype=np.float)
-        self.metrics_ = pd.DataFrame(metrics, columns=['Loss', 'RMSE', 'MAE'])
+    def init_metrics(self):
+        metrics = np.zeros((self.n_epochs, 3), dtype=np.float)  # creating data with metrics for every epoch
+        self.metrics = pd.DataFrame(metrics, columns=['Loss', 'RMSE', 'MAE'])
 
-    def _shuffle (self, X ):
-        np.random.shuffle (X)
-        return X
+    def sgd(self, X, X_val):
 
-    def _initialization (self, n_users, n_items, n_factors ):
-        """Initializes biases and latent factor matrices.
-        Parameters
-        ----------
-        n_users : int
-            Number of unique users.
-        n_items : int
-            Number of unique items.
-        n_factors : int
-            Number of factors.
-        Returns
-        -------
-        bu : numpy.array
-            User biases vector.
-        bi : numpy.array
-            Item biases vector.
-        pu : numpy.array
-            User latent factors matrix.
-        qi : numpy.array
-            Item latent factors matrix.
-        """
-        bu = np.zeros (n_users)
-        bi = np.zeros (n_items)
+        user_vector = np.zeros(self.n_users)  # initialize user vector with zeros
+        item_vector = np.zeros(self.n_items)
 
-        pu = np.random.normal (0, .1, (n_users, n_factors))
-        qi = np.random.normal (0, .1, (n_items, n_factors))
+        U = np.random.normal(0, 0.1, (self.n_users, self.n_factors))  # init U and V matrices size (users x factors)
+        V = np.random.normal(0, 0.1, (self.n_items, self.n_factors))  # and (items x factors)
 
-        return bu, bi, pu, qi
+        for epoch in range(self.n_epochs):  # Run SGD
 
-    def _run_epoch (self, X, bu, bi, pu, qi, global_mean, n_factors, lr, reg ):
-        """Runs an epoch, updating model weights (pu, qi, bu, bi).
-        Parameters
-        ----------
-        X : numpy.array
-            Training set.
-        bu : numpy.array
-            User biases vector.
-        bi : numpy.array
-            Item biases vector.
-        pu : numpy.array
-            User latent factors matrix.
-        qi : numpy.array
-            Item latent factors matrix.
-        global_mean : float
-            Ratings arithmetic mean.
-        n_factors : int
-            Number of latent factors.
-        lr : float
-            Learning rate.
-        reg : float
-            L2 regularization factor.
-        Returns:
-        --------
-        bu : numpy.array
-            User biases vector.
-        bi : numpy.array
-            Item biases vector.
-        pu : numpy.array
-            User latent factors matrix.
-        qi : numpy.array
-            Item latent factors matrix.
-        """
-        for i in range (X.shape [ 0 ]):
-            user, item, rating = int (X [ i, 0 ]), int (X [ i, 1 ]), X [ i, 2 ]
+            start = time.time()  # measuring time for this epoch
+            print('Epoch {}/{}  <3 la '.format(epoch + 1, self.n_epochs))  # do some nice looking print at the begging
 
-            # Predict current rating
-            pred = global_mean+bu [ user ]+bi [ item ]
+            # update U and V on every iteration
+            user_vector, item_vector, U, V = self.run_epoch(X, user_vector, item_vector, U, V, self.mean,
+                                                            self.n_factors, self.lr, self.reg)
 
-            for factor in range (n_factors):
-                pred += pu [ user, factor ]*qi [ item, factor ]
+            # compute metrics at this epoch
+            self.metrics.loc[epoch,:] = self.compute_metrics(X_val, user_vector, item_vector, U, V, self.mean, self.n_factors)
+            # print some nice stuff at the end of the epoch
+            self.end_print(start, self.metrics.loc[epoch, 'Loss'], self.metrics.loc[epoch, 'RMSE'], self.metrics.loc[epoch, 'MAE'])
 
-            err = rating-pred
+            # stop iterating if RMSE ain't improving by the minimum value of delta
+            if epoch > 0:
+                if self.metrics.loc[epoch-1, 'RMSE'] - self.min_delta < self.metrics.loc[epoch, 'RMSE']:
+                    break
 
-            # Update biases
-            bu [ user ] += lr*(err-reg*bu [ user ])
-            bi [ item ] += lr*(err-reg*bi [ item ])
+        self.user_vector = user_vector
+        self.item_vector = item_vector
+        self.U = U
+        self.V = V
 
-            # Update latent factors
-            for factor in range (n_factors):
-                puf = pu [ user, factor ]
-                qif = qi [ item, factor ]
+    def compute_metrics(self, X_val, user_vector, item_vector, U, V, mean, n_factors):
 
-                pu [ user, factor ] += lr*(err*qif-reg*puf)
-                qi [ item, factor ] += lr*(err*puf-reg*qif)
+        residuals = []
+        for i in range(X_val.shape[0]):
+            user, item, rating = X_val[i, 0].astype(np.int32), X_val[i, 1].astype(np.int32), X_val[i, 2]
+            pred = mean
 
-        return bu, bi, pu, qi
+            if user != -1:
+                pred += user_vector[user]
 
-    def _compute_val_metrics (self, X_val, bu, bi, pu, qi, global_mean, n_factors ):
-        """Computes validation metrics (loss, rmse, and mae).
-        Parameters
-        ----------
-        X_val : numpy.array
-            Validation set.
-        bu : numpy.array
-            User biases vector.
-        bi : numpy.array
-            Item biases vector.
-        pu : numpy.array
-            User latent factors matrix.
-        qi : numpy.array
-            Item latent factors matrix.
-        global_mean : float
-            Ratings arithmetic mean.
-        n_factors : int
-            Number of latent factors.
-        Returns
-        -------
-        loss, rmse, mae : tuple of floats
-            Validation loss, rmse and mae.
-        """
-        residuals = [ ]
+            if item != -1:
+                pred += item_vector[item]
 
-        for i in range (X_val.shape [ 0 ]):
-            user, item, rating = int (X_val [ i, 0 ]), int (X_val [ i, 1 ]), X_val [ i, 2 ]
-            pred = global_mean
+            if user != -1 and item != -1:
+                for factor in range(n_factors):
+                    pred += U[user, factor] * V[item, factor]
 
-            if user > -1:
-                pred += bu [ user ]
-
-            if item > -1:
-                pred += bi [ item ]
-
-            if (user > -1) and (item > -1):
-                for factor in range (n_factors):
-                    pred += pu [ user, factor ]*qi [ item, factor ]
-
-            residuals.append(rating-pred)
-
+            residuals.append(rating - pred)  # calculate the residuals
+        # and get our metrics
         residuals = np.array(residuals)
-        loss = np.square (residuals).mean()
+        loss = np.square(residuals).mean()
         rmse = np.sqrt(loss)
-        mae = np.absolute (residuals).mean()
-
+        mae = np.absolute(residuals).mean()
         return loss, rmse, mae
 
-    def _run_sgd(self, X, X_val):
-        """Runs SGD algorithm, learning model weights.
-        Parameters
-        ----------
-        X : numpy.array
-            Training set, first column must be user indexes, second one item
-            indexes, and third one ratings.
-        X_val : numpy.array or None
-            Validation set with the same structure as X.
-        """
-        n_users = len(np.unique(X[:, 0]))
-        n_items = len(np.unique(X[:, 1]))
+    def run_epoch(self, X, user_vector, item_vector, U, V, global_mean, n_factors, lr, reg):
 
-        bu, bi, pu, qi = self._initialization(n_users, n_items, self.n_factors)
+        for i in range(X.shape[0]):
 
-        # Run SGD
-        for epoch_ix in range(self.n_epochs):
-            start = self._on_epoch_begin(epoch_ix)
+            user, item, rating = int(X[i, 0]), int(X[i, 1]), X[i, 2]
+            pred = global_mean + user_vector[user] + item_vector[item]  # predict current rating
 
-            if self.shuffle:
-                X = self._shuffle(X)
+            for factor in range(n_factors):
+                pred += U[user, factor] * V[item, factor]
+            err = rating - pred # calc an error
 
-            bu, bi, pu, qi = self._run_epoch(X, bu, bi, pu, qi, self.global_mean_,
-                                        self.n_factors, self.lr, self.reg)
+            user_vector[user] += lr * (err - reg * user_vector[user])  # update biases
+            item_vector[item] += lr * (err - reg * item_vector[item])
 
-            if X_val is not None:
-                self.metrics_.loc[epoch_ix, :] = self._compute_val_metrics(
-                                                     X_val, bu, bi, pu, qi,
-                                                     self.global_mean_,
-                                                     self.n_factors
-                                                 )
-                self._on_epoch_end(start,
-                                   self.metrics_.loc[epoch_ix, 'Loss'],
-                                   self.metrics_.loc[epoch_ix, 'RMSE'],
-                                   self.metrics_.loc[epoch_ix, 'MAE'])
+            for factor in range(n_factors):  # update latent factors, using reg coefs and errors
+                U_upd = U[user, factor]
+                V_upd = V[item, factor]
 
-                if self.early_stopping:
-                    val_rmse = self.metrics_['RMSE'].tolist()
-                    if self._early_stopping(val_rmse, epoch_ix,
-                                            self.min_delta):
-                        break
+                U[user, factor] += lr * (err * V_upd - reg * U_upd)
+                V[item, factor] += lr * (err * U_upd - reg * V_upd)
 
-            else:
-                self._on_epoch_end(start)
+        return user_vector, item_vector, U, V
 
-        self.bu_ = bu
-        self.bi_ = bi
-        self.pu_ = pu
-        self.qi_ = qi
-
-    def predict(self, X, clip=True):
-        """Returns estimated ratings of several given user/item pairs.
-        Parameters
-        ----------
-        X : pandas.DataFrame
-            Storing all user/item pairs we want to predict the ratings. Must
-            contains columns labeled 'u_id' and 'i_id'.
-        clip : bool, default=True
-            Whether to clip the predictions or not.
-        Returns
-        -------
-        predictions : list
-            Predictions belonging to the input user/item pairs.
-        """
-        return [
-            self.predict_pair(u_id, i_id, clip)
-            for u_id, i_id in zip(X['u_id'], X['i_id'])
-        ]
-
-    def predict_pair(self, u_id, i_id, clip=True):
-        """Returns the model rating prediction for a given user/item pair.
-        Parameters
-        ----------
-        u_id : int
-            A user id.
-        i_id : int
-            An item id.
-        clip : bool, default=True
-            Whether to clip the prediction or not.
-        Returns
-        -------
-        pred : float
-            The estimated rating for the given user/item pair.
-        """
-        user_known, item_known = False, False
-        pred = self.global_mean_
-
-        if u_id in self.user_mapping_:
-            user_known = True
-            u_ix = self.user_mapping_[u_id]
-            pred += self.bu_[u_ix]
-
-        if i_id in self.item_mapping_:
-            item_known = True
-            i_ix = self.item_mapping_[i_id]
-            pred += self.bi_[i_ix]
-
-        if user_known and item_known:
-            pred += np.dot(self.pu_[u_ix], self.qi_[i_ix])
-
-        if clip:
-            pred = self.max_rating if pred > self.max_rating else pred
-            pred = self.min_rating if pred < self.min_rating else pred
-
-        return pred
-
-    def _early_stopping(self, val_rmse, epoch_idx, min_delta):
-        """Returns True if validation rmse is not improving.
-        Last rmse (plus `min_delta`) is compared with the second to last.
-        Parameters
-        ----------
-        val_rmse : list
-            Validation RMSEs.
-        min_delta : float
-            Minimun delta to argue for an improvement.
-        Returns
-        -------
-        early_stopping : bool
-            Whether to stop training or not.
-        """
-        if epoch_idx > 0:
-            if val_rmse[epoch_idx] + min_delta > val_rmse[epoch_idx-1]:
-                self.metrics_ = self.metrics_.loc[:(epoch_idx+1), :]
-                return True
-        return False
-
-    def _on_epoch_begin(self, epoch_ix):
-        """Displays epoch starting log and returns its starting time.
-        Parameters
-        ----------
-        epoch_ix : int
-            Epoch index.
-        Returns
-        -------
-        start : float
-            Starting time of the current epoch.
-        """
-        start = time.time()
-        end = '  | ' if epoch_ix < 9 else ' | '
-        print('Epoch {}/{}'.format(epoch_ix + 1, self.n_epochs), end=end)
-
-        return start
-
-    def _on_epoch_end(self, start, val_loss=None, val_rmse=None, val_mae=None):
-        """Displays epoch ending log.
-        If self.verbose, computes and displays validation metrics (loss, rmse,
-        and mae).
-        Parameters
-        ----------
-        start : float
-            Starting time of the current epoch.
-        val_loss : float, default=None
-            Validation loss.
-        val_rmse : float, default=None
-            Validation rmse.
-        val_mae : float, default=None
-            Validation mae.
-        """
+    def end_print(self, start, loss, rmse, mae):
         end = time.time()
-
-        if val_loss is not None:
-            print(f'val_loss: {val_loss:.2f}', end=' - ')
-            print(f'val_rmse: {val_rmse:.2f}', end=' - ')
-            print(f'val_mae: {val_mae:.2f}', end=' - ')
-
+        print(f'val_loss: {loss:.2f}', end=', ')
+        print(f'val_rmse: {rmse:.2f}', end=', ')
+        print(f'val_mae: {mae:.2f}', end=', ')
         print(f'took {end - start:.1f} sec')
