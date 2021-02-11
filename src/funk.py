@@ -31,7 +31,7 @@ class Funk(BaseModel):
 
     def predict(self, X):
         predictions = []  # return predictions as list
-        for u_id, i_id in zip(X['u_id'], X['i_id']):
+        for u_id, i_id in zip(X['customer_id'], X['movie_id']):
 
             pred = self.mean  # if user or item is unknown, we return mean rating by default
 
@@ -56,8 +56,8 @@ class Funk(BaseModel):
         X = X.copy()
 
         if train:
-            user_ids = X['u_id'].unique().tolist()
-            item_ids = X['i_id'].unique().tolist()
+            user_ids = X['customer_id'].unique().tolist()
+            item_ids = X['movie_id'].unique().tolist()
 
             self.n_users = len(user_ids)  # total amount of unique users
             self.n_items = len(item_ids)  # same for items
@@ -68,15 +68,15 @@ class Funk(BaseModel):
             self.user_map = dict(zip(user_ids, user_idx))  # creating id - index mapping
             self.item_map = dict(zip(item_ids, item_idx))
 
-        X['u_id'] = X['u_id'].map(self.user_map)  # linking users ids to their matrix indices
-        X['i_id'] = X['i_id'].map(self.item_map)  # linking items ids to matrix indices
+        X['customer_id'] = X['customer_id'].map(self.user_map)  # linking users ids to their matrix indices
+        X['movie_id'] = X['movie_id'].map(self.item_map)  # linking items ids to matrix indices
 
         X.fillna(-1, inplace=True)  # -1 for the missing values
 
-        X['u_id'] = X['u_id'].astype(np.int32)
-        X['i_id'] = X['i_id'].astype(np.int32)
+        X['customer_id'] = X['customer_id'].astype(np.int32)
+        X['movie_id'] = X['movie_id'].astype(np.int32)
 
-        return X[['u_id', 'i_id', 'rating']].values
+        return X[['customer_id', 'movie_id', 'rating']].values
 
     def init_metrics(self):
         metrics = np.zeros((self.n_epochs, 3), dtype=np.float)  # creating data with metrics for every epoch
