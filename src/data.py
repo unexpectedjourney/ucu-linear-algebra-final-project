@@ -53,8 +53,14 @@ def generate_sparce_matrix(df):
     customer_ids = df.customer_id.tolist()
 
     movie_ids = df.movie_id.tolist()
-    ratings = df.rating.tolist()
+    ratings = np.array(df.rating.tolist())
 
-    coo_matrix = sparse.coo_matrix((ratings, (customer_ids, movie_ids)))
+    ratings[ratings == 0] = np.mean(ratings[ratings != 0])
 
-    return coo_matrix
+    matrix = sparse.csr_matrix((
+        ratings, (customer_ids, movie_ids)
+    ))
+
+    matrix[matrix == 0] = np.mean(matrix[matrix != 0])
+
+    return matrix
