@@ -93,7 +93,7 @@ class Funk(BaseModel):
         for epoch in range(self.n_epochs):  # Run SGD
 
             start = time.time()  # measuring time for this epoch
-            print('Epoch {}/{}  <3 la '.format(epoch + 1, self.n_epochs))  # do some nice looking print at the begging
+            print('Epoch {}/{}:'.format(epoch + 1, self.n_epochs))  # do some nice looking print at the begging
 
             # update U and V on every iteration
             user_vector, item_vector, U, V = self.run_epoch(X, user_vector, item_vector, U, V, self.mean,
