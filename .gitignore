@@ -4,6 +4,7 @@
 # Data folder except subsets 
 data/*
 !data/subsets/
+!data/meta/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
