@@ -1,12 +1,12 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
 import altair as alt
 
 
 def plot_movies_latent_space(movie_embedded_df):
     alt.data_transformers.disable_max_rows()
-    cluster_select = alt.selection_single(empty="all", fields=["cluster"], on="mouseover", bind="legend") 
+    cluster_select = alt.selection_single(empty="all", fields=["cluster"], on="mouseover", bind="legend")
 
     movies_latent_chart = alt.Chart(
         movie_embedded_df
@@ -37,7 +37,7 @@ def plot_movies_latent_space(movie_embedded_df):
 
 def plot_user_latent_space(user_embedded_df):
     alt.data_transformers.disable_max_rows()
-    cluster_select = alt.selection_single(empty="all", fields=["cluster"], on="mouseover", bind="legend") 
+    cluster_select = alt.selection_single(empty="all", fields=["cluster"], on="mouseover", bind="legend")
 
     user_latent_chart = alt.Chart(
         user_embedded_df
@@ -60,3 +60,19 @@ def plot_user_latent_space(user_embedded_df):
         cluster_select
     )
     return user_latent_chart
+
+
+def plot_relative_prediction_error(df, column, algo, save=False, save_path=None):
+
+
+    error_chart = alt.Chart(df).mark_bar().encode(
+        x=alt.X(f"{column}:Q", bin=alt.Bin(extent=[-100, 100], step=10), title="Error percentage"),
+        y=alt.Y('count()', title="Number of records")
+    ).properties(
+        width=1000, height=600,
+        title=f"{algo}'s relative prediction errors"
+    )
+    if save:
+        error_chart.save(save_path)
+    return error_chart
+
