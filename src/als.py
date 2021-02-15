@@ -24,10 +24,15 @@ class AlsSVD:
         self.target_field = target_field
         self.random_seed = random_seed
         self.verbose = verbose
-    
+            
     
     def fit(self, df):
         self.df = df
+        self.target_limits = (
+            self.df[self.target_field].min(),
+            self.df[self.target_field].max(),
+        )
+        
         self.r = csr_matrix((
             df[self.target_field].values, 
             (df[self.user_field].values, df[self.item_field].values)
@@ -75,7 +80,9 @@ class AlsSVD:
         preds = []
         desc = "predict loop"
         for _, item in tqdm(df.iterrows(), desc=desc, disable=not self.verbose):
-            x_vec = self.x[:, item.customer_id].reshape(-1, 1)
-            y_vec = self.y[:, item.movie_id].reshape(-1, 1)
+            x_vec = self.x[:, item[self.user_field]].reshape(-1, 1)
+            y_vec = self.y[:, item[self.item_field]].reshape(-1, 1)
             preds.append((x_vec.T @ y_vec)[0, 0])
+        preds = np.array(preds)
+        preds = np.clip(preds, *self.target_limits)
         return preds
