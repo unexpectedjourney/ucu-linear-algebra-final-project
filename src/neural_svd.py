@@ -205,6 +205,11 @@ class NeuralSVD:
         n_user = len(df[self.user_field].unique())
         n_items = len(df[self.item_field].unique())
         
+        self.target_limits = (
+            df[self.target_field].min(),
+            df[self.target_field].max(),
+        )
+        
         self.model = self.model_type(self.k, n_user, n_items)
         self.model = self.model.to(self.device)
 
@@ -284,7 +289,8 @@ class NeuralSVD:
                 i_idx = u_idx.to(self.device)
                 r = r.to(self.device)
                 preds += self.model(u_idx, i_idx).tolist()
-
+        preds = np.array(preds)
+        preds = np.clip(preds, *self.target_limits)
         return preds
     
     def plot(self):
