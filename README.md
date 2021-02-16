@@ -12,4 +12,7 @@ There is represented an implementation of several MF algorithms for collaborativ
 
 The results were evaluated on custom subsets of Netflix Prize data, generated with a different sparsity. For more detailed information and references please follow the final report.
 
+## Links 
+- Movie latent space visualization https://ucu-linear-algebra-final-project.vercel.app/als-svd-movies-latent-space.html
+
 
